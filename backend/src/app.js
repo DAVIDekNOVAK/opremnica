@@ -74,7 +74,8 @@ export function ustvariApp({ baza, skrivnost, zdaj = () => new Date() }) {
   app.use(express.static(join(import.meta.dirname, '..', '..', 'frontend')));
 
   // napake: pokvarjen JSON v zahtevi je 400, vse drugo 500
-  app.use((napaka, req, res, next) => {
+  // Express obdelovalec napak prepozna po štirih parametrih, zato _next ostane, čeprav ni uporabljen
+  app.use((napaka, req, res, _next) => {
     if (napaka.status === 400) return res.status(400).json({ napaka: 'Neveljavna zahteva' });
     console.error(napaka);
     res.status(500).json({ napaka: 'Napaka na strežniku' });
