@@ -1,5 +1,9 @@
 # Opremnica
 
+[![CI/CD](https://github.com/DAVIDekNOVAK/opremnica/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DAVIDekNOVAK/opremnica/actions/workflows/ci-cd.yml)
+
+**Nameščena aplikacija:** povezava bo dodana po prvi namestitvi (testni računi so v razdelku [Testni računi](#testni-računi))
+
 Spletna rešitev za izposojo opreme v študentskem društvu. Član vidi, kdaj je kos opreme prost, in ga rezervira. Skrbnik opreme rezervacijo odobri ali zavrne ter evidentira prevzem in vračilo. Sistem ne dovoli dveh rezervacij istega kosa v prekrivajočem se terminu. Administrator vidi pregled uporabniških računov in vlog.
 
 Projekt pri predmetu Razvoj informacijskih rešitev in storitev (RIRS), UM FERI, 2026/27. Avtor: Maurice Čižič Rottner.
@@ -101,7 +105,34 @@ cd backend
 npm test
 ```
 
-Trenutno je 90 testov (`node:test` in `supertest`). Preverjajo API proti sprejemnim kriterijem US-01 do US-06 (tudi robne dneve termina, natanko 14 in 60 dni, hkratni oddaji, ponovljene odločitve, prevzem zunaj termina in nevrnjenega kosa, zamudo čez premik ure, ponovno vračilo), začetne podatke, datume po ljubljanskem času in trajnost celotne poti po ponovnem zagonu. Vsak test dobi svojo bazo v pomnilniku in nadzorovan današnji dan, zato se lokalne baze ne dotakne. Katere kriterije pokriva kateri test, je v [05 – Uporabniške zgodbe](docs/05-uporabniske-zgodbe.md#stanje-preverjanja).
+Backend ima 95 testov (`node:test` in `supertest`). Preverjajo API proti sprejemnim kriterijem US-01 do US-06 (tudi robne dneve termina, natanko 14 in 60 dni, hkratni oddaji, ponovljene odločitve, prevzem zunaj termina in nevrnjenega kosa, zamudo čez premik ure, ponovno vračilo), začetne podatke, datume po ljubljanskem času in trajnost celotne poti po ponovnem zagonu. Vsak test dobi svojo bazo v pomnilniku in nadzorovan današnji dan, zato se lokalne baze ne dotakne. Pet testov preverja nastavitve za namestitev (`/api/zdravje`, piškotek seje za HTTPS proxyjem). Katere kriterije pokriva kateri test, je v [05 – Uporabniške zgodbe](docs/05-uporabniske-zgodbe.md#stanje-preverjanja).
+
+## CI/CD
+
+Cevovod [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) (GitHub Actions) teče ob vsakem pull requestu v `main` in ob vsakem pushu na `main`:
+
+| Faza | Kdaj | Kaj naredi |
+|---|---|---|
+| `lint` | PR in push | ESLint (`npm run lint` v korenu) preveri backend in frontend; ob napaki pade. |
+| `build` | PR in push | Namesti produkcijske odvisnosti (npm cache), sestavi paket aplikacije (backend, frontend, `deploy/Dockerfile`), ga preizkusno zažene v Docker sliki in shrani kot artefakt `opremnica`. |
+| `test` | PR in push | Testi backenda (`node:test`, `supertest`) in frontenda (`jsdom`) s poročilom o pokritosti kode (artefakt `pokritost-kode`); ob padlem testu pade. |
+| `deploy` | samo push na `main`, če `lint`, `build` in `test` uspejo | Prenese artefakt `opremnica`, ga brez ponovne gradnje zapakira v sliko, jo objavi v GitHub Container Registry, sproži namestitev na Renderju in preveri, da javni URL streže novo različico (`/api/zdravje`). |
+
+Veja `main` je zaščitena: spremembe pridejo vanjo samo prek pull requesta, `lint`, `build` in `test` pa morajo uspeti, preden je PR mogoče združiti.
+
+Namestitev (podrobnosti in razlogi v [ADR 0007](docs/adr/0007-namestitev-na-render.md)):
+
+- Render, brezplačna spletna storitev iz slike `ghcr.io/daviddeknovak/opremnica`. Frontend in backend sta ena aplikacija na istem naslovu, zato frontend kliče relativno pot `/api`.
+- Okolje `production` v GitHubu: secret `RENDER_DEPLOY_HOOK_URL` (kljuka za namestitev) in spremenljivka `APP_URL` (javni URL aplikacije, z njo `deploy` preveri namestitev).
+- Na Renderju: okoljska spremenljivka `SESSION_SECRET`.
+- Brezplačna instanca nima trajnega diska: baza SQLite se ob vsakem zagonu ustvari na novo z [začetnimi podatki](#začetni-podatki). Po 15 minutah nedejavnosti instanca zaspi, zato prvi obisk traja do minute.
+
+Lokalno enako preveriš z:
+
+```bash
+npm ci && npm run lint && npm test          # v korenu: ESLint in testi frontenda
+cd backend && npm ci && npm run test:coverage   # testi backenda s pokritostjo
+```
 
 ## Tehnologije
 
@@ -109,13 +140,17 @@ Trenutno je 90 testov (`node:test` in `supertest`). Preverjajo API proti sprejem
 - Backend: Node.js, Express 5, REST API z JSON; isti strežnik streže tudi frontend
 - Podatkovna baza: SQLite (`better-sqlite3`)
 - Avtentikacija: seja s piškotkom (`express-session`), gesla zgoščena s `scrypt` in naključno soljo
-- Testi: `node:test` in `supertest`
+- Testi: `node:test` in `supertest`, za frontend `jsdom`
+- Kakovost kode in CI/CD: ESLint, GitHub Actions, Docker, Render
 - Razvoj: Git, GitHub, GitHub Flow
 
 ## Struktura
 
 - `backend/src/` – strežnik: `app.js` (seja, prijava, pravice), `oprema.js`, `rezervacije.js` in `uporabniki.js` (poti API), `baza.js` in `shema.sql` (SQLite), `zacetniPodatki.js` in `seed.js` (začetni podatki)
-- `backend/test/` – testi
+- `backend/test/` – testi backenda
+- `test/frontend/` – testi skupnih funkcij frontenda (18 testov, `npm test` v korenu)
+- `eslint.config.js`, `package.json` (v korenu) – ESLint za ves projekt
+- `.github/workflows/ci-cd.yml` – cevovod CI/CD; `deploy/Dockerfile` – slika za Render
 - `frontend/` – strani HTML z enim skupnim slogom (`slog.css`) in skupnimi funkcijami (`skupno.js`); v `frontend/fonts/` sta pisava in njena licenca
 - `docs/` – zasnova, uporabniške zgodbe, wireframi in arhitekturne odločitve
 
@@ -134,6 +169,8 @@ Trenutno je 90 testov (`node:test` in `supertest`). Preverjajo API proti sprejem
   - [0004 Podatkovna baza SQLite](docs/adr/0004-baza-sqlite.md)
   - [0005 Prijava s sejo in scrypt](docs/adr/0005-prijava-s-sejo-in-scrypt.md)
   - [0006 Poslovna pravila preverja backend](docs/adr/0006-pravila-preverja-backend.md)
+  - [0007 Namestitev na Render iz Docker slike, zgrajene v CI](docs/adr/0007-namestitev-na-render.md)
+- [07 – Pregled projekta](docs/07-pregled-projekta.md) (ob prevzemu)
 
 ## Razvojni proces
 

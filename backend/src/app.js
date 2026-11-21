@@ -10,16 +10,25 @@ import { uporabnikiPoti } from './uporabniki.js';
 const PISKOTEK = 'opremnica.seja';
 
 // Sestavi aplikacijo. Bazo, skrivnost in uro dobi od zunaj, da jih testi lahko zamenjajo.
-export function ustvariApp({ baza, skrivnost, zdaj = () => new Date() }) {
+// zaProxyjem: aplikacija teče za HTTPS proxyjem gostitelja (npr. Render), zato zaupa njegovim glavam
+// in piškotek seje pošilja samo prek HTTPS. verzija: oznaka nameščene različice (commit).
+export function ustvariApp({ baza, skrivnost, zdaj = () => new Date(), zaProxyjem = false, verzija = 'razvoj' }) {
   const app = express();
+  if (zaProxyjem) app.set('trust proxy', 1);
   app.use(express.json());
   app.use(session({
     name: PISKOTEK,
     secret: skrivnost,
     resave: false,
     saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: 'lax' },
+    // 'auto': piškotek je Secure, kadar je zahteva prišla prek HTTPS (za proxyjem); lokalno ostane navaden
+    cookie: { httpOnly: true, sameSite: 'lax', secure: 'auto' },
   }));
+
+  // stanje strežnika za nadzor gostitelja in preverjanje po namestitvi; brez prijave in brez podatkov iz baze
+  app.get('/api/zdravje', (req, res) => {
+    res.json({ stanje: 'ok', verzija });
+  });
 
   app.post('/api/prijava', (req, res, next) => {
     const email = String(req.body?.email ?? '').trim().toLowerCase();

@@ -13,6 +13,8 @@ if (baza.prepare('SELECT COUNT(*) AS n FROM uporabnik').get().n === 0) {
 }
 
 const vrata = process.env.PORT || 3000;
-ustvariApp({ baza, skrivnost }).listen(vrata, () => {
+const zaProxyjem = process.env.TRUST_PROXY === '1';
+const verzija = process.env.APP_VERSION || 'razvoj';
+ustvariApp({ baza, skrivnost, zaProxyjem, verzija }).listen(vrata, () => {
   console.log(`Opremnica teče na http://localhost:${vrata}`);
 });
