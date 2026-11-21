@@ -1,6 +1,6 @@
 # CI/CD za Opremnico
 # - ob vsakem pull requestu v main in ob vsakem pushu na main: lint, build in test
-# - deploy (samo ob pushu na main) bo dodan v naslednjem koraku
+# - samo ob pushu na main in če lint, build in test uspejo: deploy na Render
 name: CI/CD
 
 on:
@@ -9,7 +9,7 @@ on:
   push:
     branches: [main]
 
-# workflow samo bere kodo; nobenih pravic za pisanje v repozitorij
+# workflow privzeto samo bere kodo; job deploy dobi še pravico za objavo slike v GitHub Container Registry
 permissions:
   contents: read
 
@@ -62,24 +62,22 @@ jobs:
           mkdir -p dist/opremnica/backend
           cp -r frontend dist/opremnica/frontend
           cp -r backend/src backend/package.json backend/package-lock.json dist/opremnica/backend/
+          cp deploy/Dockerfile dist/opremnica/Dockerfile
           cd dist/opremnica/backend
           npm ci --omit=dev
 
-      # zagon iz paketa: naloži začetne podatke, zažene strežnik in preveri prijavno stran in API
-      - name: Preizkusni zagon paketa
-        working-directory: dist/opremnica/backend
-        env:
-          SESSION_SECRET: samo-za-preizkusni-zagon-v-ci
-          PORT: 3000
+      # Preizkus paketa v enaki Docker sliki, kot gre na Render (deploy/Dockerfile):
+      # zagon z začetnimi podatki, nato prijavna stran, /api/zdravje in 401 brez prijave
+      - name: Preizkusni zagon paketa v Docker sliki
         run: |
-          node src/seed.js
-          node src/streznik.js &
-          PID=$!
-          for i in $(seq 1 20); do curl -fs http://localhost:3000/ > /dev/null && break; sleep 0.5; done
+          docker build --build-arg APP_VERSION="$GITHUB_SHA" -t opremnica:preizkus dist/opremnica
+          docker run -d --name opremnica -p 3000:10000 -e SESSION_SECRET=samo-za-preizkusni-zagon-v-ci opremnica:preizkus
+          for i in $(seq 1 30); do curl -fs http://localhost:3000/api/zdravje > /dev/null && break; sleep 1; done
+          docker logs opremnica
           curl -fs http://localhost:3000/ | grep -q "Prijava"
+          test "$(curl -fs http://localhost:3000/api/zdravje | jq -r .verzija)" = "$GITHUB_SHA"
           test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/jaz)" = "401"
-          kill $PID
-          rm -rf data
+          docker rm -f opremnica
 
       - name: Zapakiraj
         run: tar -czf opremnica.tar.gz -C dist opremnica
@@ -128,3 +126,81 @@ jobs:
             backend/coverage/lcov.info
             coverage/lcov.info
           retention-days: 14
+
+  deploy:
+    name: deploy
+    # samo ob pushu na main (torej po združitvi PR-ja) in samo, če so lint, build in test uspeli
+    needs: [lint, build, test]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    # secret RENDER_DEPLOY_HOOK_URL in spremenljivka APP_URL sta nastavljena v okolju production
+    environment:
+      name: production
+      url: ${{ vars.APP_URL }}
+    permissions:
+      contents: read
+      packages: write
+    # dve namestitvi hkrati se ne smeta prehitevati
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    steps:
+      # paket iz joba build; aplikacije tu ne gradimo znova
+      - name: Prenesi paket iz joba build
+        uses: actions/download-artifact@v8
+        with:
+          name: opremnica
+
+      - name: Razpakiraj
+        run: tar -xzf opremnica.tar.gz
+
+      - name: Ime slike
+        id: slika
+        run: echo "ime=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # Dockerfile (iz paketa) samo skopira pripravljen paket v sliko z Node.js; brez npm install
+      - name: Zapakiraj paket v sliko in jo objavi v GitHub Container Registry
+        env:
+          IME: ${{ steps.slika.outputs.ime }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker build \
+            --build-arg APP_VERSION="$GITHUB_SHA" \
+            --label org.opencontainers.image.source="https://github.com/$GITHUB_REPOSITORY" \
+            --label org.opencontainers.image.revision="$GITHUB_SHA" \
+            -t "$IME:$GITHUB_SHA" -t "$IME:latest" opremnica
+          docker push "$IME:$GITHUB_SHA"
+          docker push "$IME:latest"
+
+      # Render potegne sliko s točno tem commitom; URL kljuke je skrivnost (vsebuje ključ)
+      - name: Sproži namestitev na Renderju
+        env:
+          KLJUKA: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+          SLIKA: ${{ steps.slika.outputs.ime }}:${{ github.sha }}
+        run: |
+          if [ -z "$KLJUKA" ]; then
+            echo "::error::V okolju production manjka secret RENDER_DEPLOY_HOOK_URL (glej README, razdelek CI/CD)."
+            exit 1
+          fi
+          curl -fsS -X POST "$KLJUKA&imgURL=$(jq -rn --arg v "$SLIKA" '$v|@uri')" -o /dev/null
+          echo "Namestitev slike $SLIKA je sprožena."
+
+      # počakamo, da javni URL streže prav ta commit, in preverimo prijavno stran
+      - name: Preveri nameščeno aplikacijo
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "::error::V okolju production manjka spremenljivka APP_URL (javni URL aplikacije)."
+            exit 1
+          fi
+          for i in $(seq 1 60); do
+            verzija=$(curl -fs --max-time 20 "$APP_URL/api/zdravje" | jq -r .verzija || true)
+            if [ "$verzija" = "$GITHUB_SHA" ]; then break; fi
+            echo "Čakam na novo različico (zdaj: ${verzija:-ni odgovora}) ..."
+            sleep 10
+          done
+          test "$verzija" = "$GITHUB_SHA" || { echo "::error::Na $APP_URL po 10 minutah ni različice $GITHUB_SHA"; exit 1; }
+          curl -fs "$APP_URL/" | grep -q "Prijava"
+          echo "Aplikacija je dostopna na $APP_URL (različica $GITHUB_SHA)."
