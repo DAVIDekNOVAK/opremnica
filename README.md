@@ -2,7 +2,7 @@
 
 [![CI/CD](https://github.com/DAVIDekNOVAK/opremnica/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/DAVIDekNOVAK/opremnica/actions/workflows/ci-cd.yml)
 
-**Nameščena aplikacija:** povezava bo dodana po prvi namestitvi (testni računi so v razdelku [Testni računi](#testni-računi))
+**Nameščena aplikacija:** <https://opremnica-latest.onrender.com> (testni računi so v razdelku [Testni računi](#testni-računi))
 
 Spletna rešitev za izposojo opreme v študentskem društvu. Član vidi, kdaj je kos opreme prost, in ga rezervira. Skrbnik opreme rezervacijo odobri ali zavrne ter evidentira prevzem in vračilo. Sistem ne dovoli dveh rezervacij istega kosa v prekrivajočem se terminu. Administrator vidi pregled uporabniških računov in vlog.
 
@@ -122,9 +122,10 @@ Veja `main` je zaščitena: spremembe pridejo vanjo samo prek pull requesta, `li
 
 Namestitev (podrobnosti in razlogi v [ADR 0007](docs/adr/0007-namestitev-na-render.md)):
 
-- Render, brezplačna spletna storitev iz slike `ghcr.io/daviddeknovak/opremnica`. Frontend in backend sta ena aplikacija na istem naslovu, zato frontend kliče relativno pot `/api`.
+- Render, brezplačna spletna storitev iz slike `ghcr.io/davideknovak/opremnica`. Frontend in backend sta ena aplikacija na istem naslovu, zato frontend kliče relativno pot `/api`.
 - Okolje `production` v GitHubu: secret `RENDER_DEPLOY_HOOK_URL` (kljuka za namestitev) in spremenljivka `APP_URL` (javni URL aplikacije, z njo `deploy` preveri namestitev).
 - Na Renderju: okoljska spremenljivka `SESSION_SECRET`.
+- Javni URL: <https://opremnica-latest.onrender.com> (`/api/zdravje` pokaže nameščeno različico).
 - Brezplačna instanca nima trajnega diska: baza SQLite se ob vsakem zagonu ustvari na novo z [začetnimi podatki](#začetni-podatki). Po 15 minutah nedejavnosti instanca zaspi, zato prvi obisk traja do minute.
 
 Lokalno enako preveriš z:
