@@ -1,0 +1,130 @@
+# CI/CD za Opremnico
+# - ob vsakem pull requestu v main in ob vsakem pushu na main: lint, build in test
+# - deploy (samo ob pushu na main) bo dodan v naslednjem koraku
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# workflow samo bere kodo; nobenih pravic za pisanje v repozitorij
+permissions:
+  contents: read
+
+# nov push v isti PR prekine star, še nedokončan zagon
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: 24
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Namesti ESLint
+        run: npm ci
+
+      # ESLint preveri backend (Node.js) in frontend (brskalnik); ob napaki job pade
+      - name: ESLint
+        run: npm run lint
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # cache: npm shrani ~/.npm glede na backend/package-lock.json, zato je ponovna namestitev hitrejša
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Frontend je statičen (HTML, CSS, JS brez koraka gradnje) in ga streže backend.
+      # Gradnja zato pomeni: namesti produkcijske odvisnosti (better-sqlite3 z binarnim modulom za Linux)
+      # in sestavi paket, ki vsebuje vse, kar strežnik potrebuje za zagon.
+      - name: Sestavi paket aplikacije
+        run: |
+          mkdir -p dist/opremnica/backend
+          cp -r frontend dist/opremnica/frontend
+          cp -r backend/src backend/package.json backend/package-lock.json dist/opremnica/backend/
+          cd dist/opremnica/backend
+          npm ci --omit=dev
+
+      # zagon iz paketa: naloži začetne podatke, zažene strežnik in preveri prijavno stran in API
+      - name: Preizkusni zagon paketa
+        working-directory: dist/opremnica/backend
+        env:
+          SESSION_SECRET: samo-za-preizkusni-zagon-v-ci
+          PORT: 3000
+        run: |
+          node src/seed.js
+          node src/streznik.js &
+          PID=$!
+          for i in $(seq 1 20); do curl -fs http://localhost:3000/ > /dev/null && break; sleep 0.5; done
+          curl -fs http://localhost:3000/ | grep -q "Prijava"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/api/jaz)" = "401"
+          kill $PID
+          rm -rf data
+
+      - name: Zapakiraj
+        run: tar -czf opremnica.tar.gz -C dist opremnica
+
+      - name: Shrani paket kot artefakt
+        uses: actions/upload-artifact@v7
+        with:
+          name: opremnica
+          path: opremnica.tar.gz
+          retention-days: 14
+          if-no-files-found: error
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            backend/package-lock.json
+
+      - name: Namesti odvisnosti
+        run: |
+          npm ci
+          npm ci --prefix backend
+
+      # če pade kateri koli test, korak (in s tem job) pade
+      - name: Testi backenda s pokritostjo
+        run: npm run test:coverage --prefix backend
+
+      - name: Testi frontenda s pokritostjo
+        run: npm run test:coverage
+
+      # poročili (lcov) se shranita tudi, če kateri test pade
+      - name: Shrani poročila o pokritosti
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pokritost-kode
+          path: |
+            backend/coverage/lcov.info
+            coverage/lcov.info
+          retention-days: 14
