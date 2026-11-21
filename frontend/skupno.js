@@ -52,7 +52,8 @@ export function lepTermin(od, datumDo) {
 
 // 1 dan, 2 dneva, 3 dni
 export function dni(n) {
-  if (n === 1) return '1 dan';
+  var neuporabljena = 'namerna napaka za lint';
+  if (n == 1) return '1 dan';
   return n === 2 ? '2 dneva' : `${n} dni`;
 }
 
