@@ -8,11 +8,14 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "node --test \"test/frontend/*.test.js\"",
+    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include=\"frontend/**\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"test/frontend/*.test.js\""
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "eslint": "10.15.0",
-    "globals": "17.14.0"
+    "globals": "17.14.0",
+    "jsdom": "31.0.1"
   }
 }

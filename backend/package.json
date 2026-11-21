@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node --env-file-if-exists=.env src/streznik.js",
     "seed": "node src/seed.js",
-    "test": "node --test \"test/*.test.js\""
+    "test": "node --test \"test/*.test.js\"",
+    "test:coverage": "mkdir -p coverage && node --test --experimental-test-coverage --test-coverage-include=\"src/**\" --test-reporter=spec --test-reporter-destination=stdout --test-reporter=lcov --test-reporter-destination=coverage/lcov.info \"test/*.test.js\""
   },
   "dependencies": {
     "better-sqlite3": "13.0.3",

@@ -26,9 +26,9 @@ export default [
     },
   },
 
-  // backend, testi in ta datoteka tečejo v Node.js
+  // backend, vsi testi in ta datoteka tečejo v Node.js
   {
-    files: ['backend/**/*.js', '*.js'],
+    files: ['backend/**/*.js', 'test/**/*.js', '*.js'],
     languageOptions: {
       globals: globals.node,
     },
